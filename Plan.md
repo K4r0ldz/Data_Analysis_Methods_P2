@@ -168,7 +168,7 @@ Każda metoda w raporcie: krótka geneza, intuicja, wzór/algorytm w 3-5 zdaniac
 
 | # | Metoda | Klasa sklearn | Cytowanie |
 |---|---|---|---|
-| 1 | (Multinomial) Regresja logistyczna | `LogisticRegression` | Cox (1958), Hosmer & Lemeshow (2000) |
+| 1 | Regresja logistyczna | `LogisticRegression` | Cox (1958), Hosmer & Lemeshow (2000) |
 | 2 | Random Forest | `RandomForestClassifier` | Breiman (2001) |
 | 3 | Gradient Boosting | `XGBClassifier` (xgboost) lub `LGBMClassifier` | Chen & Guestrin (2016) / Ke et al. (2017) |
 | 4 | SVM (RBF) | `SVC(kernel='rbf', probability=True)` | Cortes & Vapnik (1995) |
