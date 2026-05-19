@@ -9,7 +9,8 @@ Projekt zaliczeniowy z przedmiotu *Metody Analizy Danych*. Zadaniem jest wykonan
 **Wybory ustalone z użytkownikiem:**
 - Problem: **klasyfikacja binarna** — `CONFIRMED` vs `FALSE POSITIVE` (odrzucamy `CANDIDATE` jako klasę nierozstrzygniętą; zostaje 7316 obserwacji, klasy ~31/69%).
 - Forma oddania: **`.py` (skrypty/moduły) + osobny PDF** ze sprawozdaniem.
-- Praca **solo**.
+- Praca **zespołowa — 3 osoby**: Karol Dziuba, Aleksander Grzegrzułka, Adam Grzywacz.
+- Rubryka (`projekt2_opis.pdf`) dopuszcza grupy do 5 osób, a wymagania minimalne (≥3 metody + hybryda, ≥1 miernik, ≥1 sposób walidacji) są stałe niezależnie od liczebności zespołu — celujemy powyżej minimum (5 mechanizmów decyzyjnych, testy statystyczne, SHAP).
 
 **KRYTYCZNA pułapka — data leakage.** W zbiorze są kolumny będące wynikiem istniejącego pipeline'u NASA, które zawierają informację o targecie:
 - `koi_pdisposition` — wstępna klasyfikacja Keplera (kopia targetu),
@@ -22,7 +23,25 @@ Cel pracy: zbudować rzetelny klasyfikator rozpoznający potwierdzone egzoplanet
 
 ---
 
-## Krok 0 — Środowisko i struktura projektu
+## Podział zadań — zespół 3-osobowy
+
+Podział **pionowy wg faz**: każda osoba prowadzi jeden etap end-to-end — kod w `projekt.py`, wygenerowane wykresy i tabele oraz odpowiadającą sekcję sprawozdania. Role są bezimienne (**Osoba A / B / C**) — zespół przydziela się sam.
+
+| Rola | Etap (kroki planu) | Funkcje w `projekt.py` | Wykresy / tabele | Sekcja raportu |
+|---|---|---|---|---|
+| **Osoba A** — EDA i preprocessing | Krok 1, Krok 2 | `krok_1_wczytaj_i_przefiltruj`, `krok_2_statystyki`, `krok_3_wizualizacja`, `krok_4_outliery`, `zbuduj_preprocessor` | `figures/01`–`08`, `tab1_statystyki_opisowe`, `tab2_outliery` | 6.1 Cel, 6.2 Wstępna analiza danych |
+| **Osoba B** — Modele i hybryda | Krok 3, Krok 4 | `krok_6_modele`, `krok_7_hybryda`, `krok_9_importance` | `figures/11_importance_*`, `tab3_hiperparametry`, `importance_*.csv` | 7 Opis metod (5 metod + hybryda) |
+| **Osoba C** — Walidacja, demo, raport | Krok 5, Krok 6 | `licz_metryki`, `krok_8_ewaluacja`, `krok_10_demo`, `main` | `figures/cm_*`, `09_roc_all`, `10_pr_all`, `tab4_wyniki`, `tab5_demo_syntetyki`, `wilcoxon_test.txt` | 8 Rezultaty, 9 Demo + składanie raportu |
+
+**Balans obciążeń:** Osoba A ma najcięższy kod (cała EDA i wizualizacja), Osoba B najcięższy opis metod (5 metod z cytowaniami i wzorami), Osoba C koordynuje raport i pisze części wspólne (abstrakt, wstęp, wnioski). Obciążenia wyrównują się między kodem a tekstem.
+
+**Punkt styku:** `feature importance` (`krok_9_importance`) należy do Osoby B, ale rysunki `11_importance_*` trafiają do sekcji 8 Rezultaty redagowanej przez Osobę C — uzgodnić podpisy i numerację rysunków.
+
+Kroki **wspólne**: Krok 0 (środowisko, repo), Krok 7 (sprawozdanie — patrz tabela w Kroku 7), Krok 8 (checklist + weryfikacja końcowa).
+
+---
+
+## Krok 0 — Środowisko i struktura projektu (wspólne)
 
 **Założyć venv** (`python -m venv .venv && source .venv/bin/activate`) i zainstalować:
 
@@ -38,38 +57,36 @@ Cel pracy: zbudować rzetelny klasyfikator rozpoznający potwierdzone egzoplanet
 | `shap` | (opcjonalnie, na +) interpretacja modeli |
 | `joblib` | zapis modeli do `.pkl` |
 
-Zapisać `requirements.txt` (`pip freeze > requirements.txt`) — to liczy się jako profesjonalizm w sprawozdaniu (sekcja "Reproducibility").
+Zapisać `req.txt` (`pip freeze > req.txt`) — to liczy się jako profesjonalizm w sprawozdaniu (sekcja "Reproducibility").
 
 **Sugerowana struktura plików:**
 
 ```
 Projekt_2/
 ├── cumulative.csv
-├── requirements.txt
+├── projekt.py                  # cały kod: EDA, preprocessing, modele, ewaluacja, demo
+├── req.txt
 ├── README.MD
-├── src/
-│   ├── 01_eda.py              # EDA + statystyki + wykresy → zapis do figures/
-│   ├── 02_preprocessing.py    # czyszczenie, imputacja, transformacje, split
-│   ├── 03_models.py           # 4 modele bazowe + hybrydowy
-│   ├── 04_evaluation.py       # CV, mierniki, ROC, macierze pomyłek
-│   ├── 05_synthetic_demo.py   # predykcja na sztucznych obserwacjach
-│   └── utils.py               # wspólne funkcje (load_data, set_seed)
-├── figures/                   # wszystkie wykresy do raportu (PNG, dpi=300)
-├── results/                   # tabele z wynikami (CSV)
-├── models/                    # zapisane .pkl
+├── figures/                    # wszystkie wykresy do raportu (PNG, dpi=300)
+├── results/                    # tabele z wynikami (CSV)
+├── models/                     # zapisane .pkl
 └── report/
-    ├── sprawozdanie.tex       # (lub .docx)
+    ├── sprawozdanie.tex        # (lub .docx)
     ├── references.bib
-    └── sprawozdanie.pdf       # finalny PDF
+    └── sprawozdanie.pdf        # finalny PDF
 ```
+
+**Organizacja kodu w `projekt.py`:** podzielić skrypt na sekcje oddzielone komentarzami (`# === Krok 1: EDA ===`, `# === Krok 2: Preprocessing ===` itd.) albo opakować każdy krok w funkcję (`def krok_1_eda():`, `def krok_2_preprocessing():` ...) wywoływaną w `if __name__ == "__main__":`. Pozwala to puścić cały pipeline jednym `python projekt.py` lub zaimportować i uruchamiać kroki pojedynczo.
 
 **Reprodukowalność:** `np.random.seed(42)`, `random.seed(42)`, `random_state=42` w każdym modelu i splicie.
 
+**Współpraca zespołowa nad `projekt.py`:** `projekt.py` to jeden plik, ale funkcje `krok_*` są rozłączne — każda osoba edytuje wyłącznie swoje funkcje (patrz „Podział zadań"), więc git scala zmiany per-funkcja bez konfliktów. Fragmenty wspólne (blok `import`, stałe `ID_COLS` / `LEAKAGE_COLS` / `SKY_COLS` / `LOG_FEATURES`, funkcja `main()`) koordynuje **Osoba C** — każda zmiana w nich zgłaszana na czacie zespołu. Sugerowany workflow: gałąź per osoba (`feature/osoba-a-eda`, `feature/osoba-b-modele`, `feature/osoba-c-ewaluacja`), przegląd przez pozostałe dwie osoby przed scaleniem do `main`.
+
 ---
 
-## Krok 1 — Wstępna analiza danych (EDA)
+## Krok 1 — Wstępna analiza danych (EDA) (Osoba A)
 
-Skrypt: [src/01_eda.py](src/01_eda.py)
+Skrypt: [projekt.py](projekt.py) — sekcja EDA
 
 ### 1.1 Wczytanie i kontekst zmiennych
 
@@ -147,9 +164,9 @@ Każdy wykres zapisać `plt.savefig('figures/...png', dpi=300, bbox_inches='tigh
 
 ---
 
-## Krok 2 — Podział danych
+## Krok 2 — Podział danych (Osoba A)
 
-Skrypt: [src/02_preprocessing.py](src/02_preprocessing.py)
+Skrypt: [projekt.py](projekt.py) — sekcja preprocessing
 
 - `from sklearn.model_selection import train_test_split, StratifiedKFold`.
 - Strategia: **trening 80% / test 20%** (`stratify=y`, `random_state=42`) jako *hold-out test set* — używany wyłącznie raz na końcu do raportowania ostatecznych wyników.
@@ -158,9 +175,9 @@ Skrypt: [src/02_preprocessing.py](src/02_preprocessing.py)
 
 ---
 
-## Krok 3 — Modele bazowe (3 metody, ale zaplanuj 4)
+## Krok 3 — Modele bazowe (3 metody, ale zaplanuj 4) (Osoba B)
 
-Skrypt: [src/03_models.py](src/03_models.py)
+Skrypt: [projekt.py](projekt.py) — sekcja modeli
 
 Wymagane minimum: **3 metody + 1 hybryda = 4 mechanizmy**. Sugeruję zrobić **4 metody + 1 hybryda = 5 mechanizmów** dla pełnych punktów.
 
@@ -184,7 +201,7 @@ Zapisać w tabeli wybrane hiperparametry — wstawić do raportu.
 
 ---
 
-## Krok 4 — Model hybrydowy (mechanizm #4)
+## Krok 4 — Model hybrydowy (mechanizm #4) (Osoba B)
 
 Wymóg z opisu: *„np. średnia ważona score'ów z metod"*. Trzy ścieżki:
 
@@ -196,9 +213,9 @@ W raporcie napisać explicite, że hybryda to **czwarty mechanizm decyzyjny** sp
 
 ---
 
-## Krok 5 — Walidacja i mierniki
+## Krok 5 — Walidacja i mierniki (Osoba C)
 
-Skrypt: [src/04_evaluation.py](src/04_evaluation.py)
+Skrypt: [projekt.py](projekt.py) — sekcja ewaluacji
 
 ### 5.1 Mierniki (wybrać kilka, nie tylko jeden)
 
@@ -230,9 +247,9 @@ Z `sklearn.metrics`:
 
 ---
 
-## Krok 6 — Przykład użycia na sztucznych obserwacjach
+## Krok 6 — Przykład użycia na sztucznych obserwacjach (Osoba C)
 
-Skrypt: [src/05_synthetic_demo.py](src/05_synthetic_demo.py)
+Skrypt: [projekt.py](projekt.py) — sekcja demo na sztucznych obserwacjach
 
 Stworzyć ręcznie **3-5 fikcyjnych KOI** jako `pd.DataFrame` z fizycznie sensownymi wartościami i opisem scenariusza. Przykłady:
 
@@ -248,7 +265,7 @@ Dla każdego: przepuścić przez ten sam pipeline (`pipeline.predict(X_synth)`, 
 
 ---
 
-## Krok 7 — Sprawozdanie PDF (artykuł naukowy)
+## Krok 7 — Sprawozdanie PDF (artykuł naukowy) (wspólne)
 
 Folder: [report/](report/)
 
@@ -257,7 +274,7 @@ Folder: [report/](report/)
 ### Struktura (1:1 z rubryką w `projekt2_opis.pdf`):
 
 1. **Tytuł** — np. *"Klasyfikacja kandydatów na egzoplanety z misji Kepler z wykorzystaniem modeli uczenia maszynowego"*.
-2. **Autor** — Imię, Nazwisko, afiliacja, email.
+2. **Autorzy** — Karol Dziuba, Aleksander Grzegrzułka, Adam Grzywacz (afiliacja, e-maile).
 3. **Streszczenie (≤150 słów)** — problem + dane + metody + wynik (jedno zdanie na każde). Liczyć słowa!
 4. **Słowa kluczowe** — 5-7, np.: klasyfikacja, uczenie maszynowe, egzoplanety, Kepler, Random Forest, XGBoost, model hybrydowy.
 5. **Wprowadzenie** — kontekst astronomiczny (tranzyty, misja Kepler) + motywacja ML + cel pracy + struktura artykułu.
@@ -286,6 +303,21 @@ Folder: [report/](report/)
 10. **Wnioski / Dyskusja** — co zadziałało, co nie, ograniczenia (np. odrzucenie CANDIDATE), kierunki dalsze (sieci 1D-CNN na krzywych światła, kalibracja).
 11. **Bibliografia** — patrz niżej.
 
+### Podział sekcji raportu między autorów
+
+| Sekcja raportu | Autor |
+|---|---|
+| 1 Tytuł, 2 Autorzy | wspólne (składa Osoba C) |
+| 3 Streszczenie, 4 Słowa kluczowe, 5 Wprowadzenie | Osoba C |
+| 6.1 Cel, 6.2 Wstępna analiza danych | Osoba A |
+| 7 Opis metod (5 metod + hybryda) | Osoba B |
+| 8 Rezultaty | Osoba C |
+| 9 Przykład użycia na sztucznych obserwacjach | Osoba C |
+| 10 Wnioski / Dyskusja | wspólne — każdy dorzuca akapit o swojej części, redaguje Osoba C |
+| 11 Bibliografia | wspólne — każdy dodaje cytowania swojej części do `references.bib`, scala Osoba C |
+
+**Składanie LaTeX/Overleaf** i wygenerowanie finalnego PDF — Osoba C. Wszystkie osoby pracują w jednym projekcie Overleaf (kontrola wersji online eliminuje konflikty scalania).
+
 ### Bibliografia — minimalny zestaw
 
 ```
@@ -305,9 +337,9 @@ Ke, G., et al. (2017). LightGBM: A highly efficient gradient boosting decision t
 
 ---
 
-## Krok 8 — Checklist „pełne punkty" (przed oddaniem)
+## Krok 8 — Checklist „pełne punkty" (przed oddaniem) (wspólne)
 
-Sprawdź każdy punkt z opisu projektu literalnie:
+Sprawdź każdy punkt z opisu projektu literalnie. **Każda osoba odhacza pozycje ze swojego etapu**, a finalną weryfikację wykonuje cały zespół:
 
 - [ ] Tytuł, autor, streszczenie ≤150 słów (policzyć!), słowa kluczowe, wprowadzenie.
 - [ ] Cel jasno sformułowany w sekcji "Przedmiot badania".
@@ -324,8 +356,9 @@ Sprawdź każdy punkt z opisu projektu literalnie:
 - [ ] **Przykład użycia na sztucznych obserwacjach** (tabela 3-5 scenariuszy).
 - [ ] Bibliografia (≥10 pozycji).
 - [ ] Format ≈ artykuł naukowy (sekcje, abstrakt, podpisy rys./tabel, numerowanie).
-- [ ] Pliki do oddania: `cumulative.csv`, `sprawozdanie.pdf`, kod `.py` (wszystkie pliki z `src/`), `requirements.txt`.
+- [ ] Pliki do oddania: `cumulative.csv`, `sprawozdanie.pdf`, `projekt.py`, `req.txt`.
 - [ ] Załadowanie na MS Teams **bez archiwizowania** (wymóg z opisu — luzem, nie .zip).
+- [ ] **Wspólne czytanie całego raportu na głos** przez wszystkie 3 osoby — spójność stylu, terminologii i numeracji rysunków/tabel między sekcjami różnych autorów.
 
 ### Co wynosi pracę powyżej minimum (na realne 5.0):
 
@@ -335,7 +368,7 @@ Sprawdź każdy punkt z opisu projektu literalnie:
 - Test statystyczny porównujący modele (Wilcoxon / McNemar).
 - Krzywe ROC i PR na wspólnych wykresach.
 - Feature importance + SHAP.
-- Reprodukowalność: `random_state=42` wszędzie, `requirements.txt`, `joblib.dump` modeli.
+- Reprodukowalność: `random_state=42` wszędzie, `req.txt`, `joblib.dump` modeli.
 - Wykresy w 300 dpi, jednolita paleta, opisane osie i legendy.
 - Polski tekst poprawny stylistycznie, bez literówek (przeczytać na głos przed oddaniem).
 
@@ -346,6 +379,6 @@ Sprawdź każdy punkt z opisu projektu literalnie:
 1. **Sanity test danych:** po filtrowaniu liczyć `df.shape` — powinno być ~7316 wierszy × ~30-40 kolumn (po odrzuceniu leakage/ID).
 2. **Sanity test modelu:** dla regresji logistycznej z 3 cechami (`koi_depth`, `koi_prad`, `koi_model_snr`) ROC-AUC powinno być w okolicach 0.85-0.92. Dla pełnego XGBoost — 0.93-0.97. **Jeśli widzisz 0.99+ to znaczy, że nie usunąłeś leakage'u** — wróć do kroku 1.2.
 3. **Sanity test syntetyków:** "Earth 2.0" powinno dać `predict_proba(CONFIRMED) > 0.5` w przynajmniej 3 z 5 modeli.
-4. **Spróbuj uruchomić skrypty od zera** w czystym venv z `requirements.txt` — czy wszystko działa.
+4. **Spróbuj uruchomić `projekt.py` od zera** w czystym venv z `req.txt` — czy wszystko działa.
 5. Wyrenderuj PDF, otwórz, sprawdź wszystkie odnośniki do figur (`Fig. ??` = błąd kompilacji LaTeX).
 6. Policzyć słowa w abstrakcie (`echo "..." | wc -w`) — musi być ≤150.
