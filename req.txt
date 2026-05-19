@@ -10,3 +10,4 @@ lightgbm
 shap
 joblib
 imbalanced-learn
+Pillow
