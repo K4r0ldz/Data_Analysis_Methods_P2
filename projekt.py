@@ -6,6 +6,14 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import scipy.stats as stats
 import seaborn as sns
+import joblib
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import GridSearchCV, StratifiedKFold
+from sklearn.pipeline import Pipeline
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
+from xgboost import XGBClassifier
+import numpy as np
 
 
 """
@@ -211,7 +219,128 @@ def generate_visualizations(df):
         wait(futures)
 
 
+"""
+    Osoba B
+"""
+# Stałe
+PARAM_GRID_LOGREG = {
+    "clf__C": [0.01, 0.1, 1, 10],
+    "clf__penalty": ["l1", "l2"],
+}
+
+PARAM_GRID_RF = {
+    "clf__n_estimators": [200, 500],
+    "clf__max_depth": [None, 10, 20],
+    "clf__min_samples_leaf": [1, 5, 10],
+}
+
+PARAM_GRID_XGB = {
+    "clf__n_estimators": [200, 500],
+    "clf__max_depth": [3, 6, 9],
+    "clf__learning_rate": [0.05, 0.1],
+    "clf__subsample": [0.8, 1.0],
+}
+
+PARAM_GRID_SVM = {
+    "clf__C": [0.1, 1, 10],
+    "clf__gamma": ["scale", 0.01, 0.1],
+}
+
+# Regresja liniowa, Random Forest, Gradient Boosting, SVM z jądrem RBF
+def train_model(name, classifier, param_grid, preprocessor, X_train, y_train, model_path=None):
+    if model_path is None:
+        model_path = f"models/{name}.pkl"
+    os.makedirs(os.path.dirname(model_path), exist_ok=True)
+
+    pipeline = Pipeline([
+        ("preprocessor", preprocessor),
+        ("clf", classifier),
+    ])
+
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    grid = GridSearchCV(
+        pipeline,
+        param_grid=param_grid,
+        cv=cv,
+        scoring="roc_auc",
+        n_jobs=-1,
+        refit=True,
+    )
+    grid.fit(X_train, y_train)
+
+    print(f"[{name}] Best params: {grid.best_params_}")
+    print(f"[{name}] Best CV ROC-AUC: {grid.best_score_:.4f}")
+
+    joblib.dump(grid.best_estimator_, model_path)
+    return grid.best_estimator_, grid.best_params_, grid.best_score_
+
+# Wyciąga i zapisuje ważność cech dla modeli, które ją udostępniają (np. RF, XGB) lub współczynniki dla modeli liniowych (LogReg, SVM liniowy).
+def compute_feature_importances(model, model_name, X_train, output_dir="results"):
+    os.makedirs(output_dir, exist_ok=True)
+    clf = model.named_steps["clf"]
+
+    if hasattr(clf, "feature_importances_"):
+        importances = clf.feature_importances_
+    elif hasattr(clf, "coef_"):
+        importances = abs(clf.coef_[0])  # dla LogReg/SVM liniowego
+    else:
+        print(f"[{model_name}] brak feature_importances_ ani coef_")
+        return None
+
+    feature_names = model.named_steps["preprocessor"].get_feature_names_out()
+
+    imp_df = pd.DataFrame({"feature": feature_names, "importance": importances}) \
+               .sort_values("importance", ascending=False)
+    imp_df.to_csv(f"{output_dir}/importance_{model_name}.csv", index=False)
+    return imp_df
+
+# Model hybrydowy
+class HybridSoftVoter:
+  
+    def __init__(self, models: dict, weights: dict):
+        self.models = models
+        self.weights = weights
+        self.classes_ = np.array([0, 1])
+
+    def predict_proba(self, X):
+        proba = np.zeros((len(X), 2))
+        for name, model in self.models.items():
+            proba += self.weights[name] * model.predict_proba(X)
+        return proba
+
+    def predict(self, X, threshold=0.5):
+        return (self.predict_proba(X)[:, 1] >= threshold).astype(int)
+    
+def hybryda(base_models: dict, cv_scores: dict, model_path: str = "models/hybrid.pkl"):
+
+    os.makedirs(os.path.dirname(model_path), exist_ok=True)
+
+    names = list(base_models.keys())
+    raw = np.array([cv_scores[n] for n in names])
+    weights = raw / raw.sum()
+    weight_dict = dict(zip(names, weights))
+
+    print(f"[hybrid] wagi: {weight_dict}")
+
+    hybrid = HybridSoftVoter(base_models, weight_dict)
+    joblib.dump(hybrid, model_path)
+
+    # Zapis wag do raportu hiperparametry 
+    pd.DataFrame(
+        {"model": names, "cv_roc_auc": raw, "waga": weights}
+    ).to_csv("tables/hybrid_wagi.csv", index=False)
+
+    return hybrid
+
+"""
+    Osoba C
+"""
+
+
+
 if __name__ == "__main__":
+
+    # Osoba A
     plt.rcParams["font.family"] = "serif"
     plt.rcParams["font.serif"] = ["Times New Roman", "Liberation Serif"]
 
@@ -226,13 +355,48 @@ if __name__ == "__main__":
     df_viz = pd.concat([X, Y], axis=1)
     generate_visualizations(df_viz)
 
+    # Osoba B
+    """
+    hp_results = []
 
+    logreg_model, p, s = train_model(
+    "logreg",
+    LogisticRegression(solver="liblinear", max_iter=1000, random_state=42),
+    PARAM_GRID_LOGREG, preprocessor, X_train, y_train)
+    hp_results.append({"model": "logreg", "best_params": p, "cv_roc_auc": s})
+    compute_feature_importances(logreg_model, "logreg", X_train)
 
-"""
-    Osoba B
-"""
+    rf_model, p, s = train_model(
+    "rf",
+    RandomForestClassifier(random_state=42, n_jobs=-1, class_weight="balanced"),
+    PARAM_GRID_RF, preprocessor, X_train, y_train)
+    hp_results.append({"model": "rf", "best_params": p, "cv_roc_auc": s})
+    compute_feature_importances(rf_model, "rf", X_train)
 
+    xgb_model, p, s = train_model(
+    "xgboost",
+    XGBClassifier(random_state=42, eval_metric="logloss", n_jobs=-1),
+    PARAM_GRID_XGB, preprocessor, X_train, y_train)
+    hp_results.append({"model": "xgboost", "best_params": p, "cv_roc_auc": s})
+    compute_feature_importances(xgb_model, "xgboost", X_train)
 
-"""
-    Osoba C
-"""
+    svm_model, p, s = train_model(
+    "svm_rbf",
+    SVC(kernel="rbf", probability=True, random_state=42, class_weight="balanced"),
+    PARAM_GRID_SVM, preprocessor, X_train, y_train)
+    hp_results.append({"model": "svm_rbf", "best_params": p, "cv_roc_auc": s})
+    compute_feature_importances(svm_model, "svm_rbf", X_train)
+
+    os.makedirs("tables", exist_ok=True)
+    pd.DataFrame(hp_results).to_csv("tables/hiperparametry.csv", index=False)
+
+    base_models = {
+    "logreg": logreg_model,
+    "rf": rf_model,
+    "xgboost": xgb_model,
+    "svm_rbf": svm_model,
+    }
+    cv_scores = {row["model"]: row["cv_roc_auc"] for row in hp_results}
+
+    hybrid_model = hybryda(base_models, cv_scores)   
+    """
