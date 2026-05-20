@@ -8,6 +8,10 @@ import scipy.stats as stats
 import seaborn as sns
 
 
+"""
+    Osoba A
+"""
+
 # Wczytuje dane z pliku CSV
 # Usuwa kolumny typu leakage/ID/błędy/pozycja,
 # Zwraca macierz cech X z nazwanymi kolumnami
@@ -221,3 +225,14 @@ if __name__ == "__main__":
 
     df_viz = pd.concat([X, Y], axis=1)
     generate_visualizations(df_viz)
+
+
+
+"""
+    Osoba B
+"""
+
+
+"""
+    Osoba C
+"""
