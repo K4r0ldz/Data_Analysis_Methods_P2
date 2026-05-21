@@ -512,12 +512,38 @@ def run_synthetic_demo(models_dict, X_template):
     synths_df.index = scenarios
     
     if "okres_orbitalny" in synths_df.columns:
-        synths_df.loc["Earth 2.0", ["okres_orbitalny", "promien_planety", "temperatura_rownowagi", "glebokosc_tranzytu", "stosunek_sygnal_szum"]] = [365.0, 1.0, 288.0, 84.0, 50.0]
-        synths_df.loc["Hot Jupiter", ["okres_orbitalny", "promien_planety", "temperatura_rownowagi", "glebokosc_tranzytu", "stosunek_sygnal_szum"]] = [3.0, 11.0, 1500.0, 10000.0, 100.0]
-        synths_df.loc["Eclipsing binary", ["glebokosc_tranzytu", "promien_planety", "stosunek_sygnal_szum"]] = [50000.0, 25.0, 5.0]
-        synths_df.loc["Noise", ["stosunek_sygnal_szum"]] = [4.0]
-        synths_df.loc["Borderline", ["okres_orbitalny", "promien_planety", "stosunek_sygnal_szum"]] = [50.0, 2.0, 10.0]
-        
+      all_columns = [
+          "okres_orbitalny", "czas_trwania", "glebokosc_tranzytu", "promien_planety",
+          "temperatura_rownowagi", "insolacja", "stosunek_sygnal_szum",
+          "temperatura_efektywna", "log_grawitacji", "promien_gwiazdy",
+          "parametr_zderzenia", "jasnosc_kepler"
+      ]
+
+      # Earth 2.0 - przypomina Ziemię (gwiazda podobna do Słońca)
+      synths_df.loc["Earth 2.0", all_columns] = [
+          365.0, 13.0, 84.0, 1.0, 288.0, 1.0, 50.0, 5778.0, 4.44, 1.0, 0.1, 12.0
+      ]
+
+      # Hot Jupiter - gazowy gigant bardzo blisko gwiazdy
+      synths_df.loc["Hot Jupiter", all_columns] = [
+          3.0, 3.0, 10000.0, 11.0, 1500.0, 1000.0, 100.0, 5778.0, 4.44, 1.0, 0.5, 11.0
+      ]
+
+      # Eclipsing binary - zaćmieniowy układ podwójny (fałszywy alarm, ogromny spadek jasności)
+      synths_df.loc["Eclipsing binary", all_columns] = [
+          5.0, 5.0, 50000.0, 25.0, 1000.0, 500.0, 5.0, 6000.0, 4.20, 1.5, 0.9, 13.0
+      ]
+
+      # Noise - przypadkowy szum w danych słabej gwiazdy
+      synths_df.loc["Noise", all_columns] = [
+          10.0, 1.0, 10.0, 0.5, 500.0, 10.0, 4.0, 5000.0, 4.50, 0.8, 0.5, 16.0
+      ]
+
+      # Borderline - słaby sygnał, graniczny przypadek do weryfikacji
+      synths_df.loc["Borderline", all_columns] = [
+          50.0, 4.0, 300.0, 2.0, 400.0, 5.0, 10.0, 5500.0, 4.40, 0.9, 0.3, 14.0
+      ]
+
     res = []
     for name, model in models_dict.items():
         proba = model.predict_proba(synths_df)[:, 1]
