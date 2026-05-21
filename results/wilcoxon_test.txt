@@ -1,0 +1,12 @@
+Test McNemara na zbiorze testowym (p-values):
+
+logreg vs rf -> p-value=4.6529e-19
+logreg vs xgboost -> p-value=1.3424e-24
+logreg vs svm_rbf -> p-value=1.6904e-17
+logreg vs hybrid -> p-value=1.4938e-22
+rf vs xgboost -> p-value=1.3418e-02
+rf vs svm_rbf -> p-value=3.5833e-01
+rf vs hybrid -> p-value=1.7630e-01
+xgboost vs svm_rbf -> p-value=1.4183e-03
+xgboost vs hybrid -> p-value=8.8973e-02
+svm_rbf vs hybrid -> p-value=2.5574e-02

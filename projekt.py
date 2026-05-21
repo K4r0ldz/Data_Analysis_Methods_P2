@@ -21,6 +21,11 @@ from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import FunctionTransformer, StandardScaler
 from sklearn import set_config
 from sklearn.model_selection import train_test_split, RepeatedStratifiedKFold
+from statsmodels.stats.contingency_tables import mcnemar
+from sklearn.metrics import (accuracy_score, precision_score, recall_score,
+                             f1_score, roc_auc_score, average_precision_score,
+                             roc_curve, precision_recall_curve, confusion_matrix,
+                             ConfusionMatrixDisplay)
 
 
 """
@@ -408,6 +413,122 @@ def hybryda(base_models: dict, cv_scores: dict, model_path: str = "models/hybrid
 """
 
 
+def evaluate_models_and_plot(models_dict, X_test, y_test, output_dir="figures"):
+    # Osoba C - kod ewaluacji i wykresy do raportu
+    os.makedirs(output_dir, exist_ok=True)
+    os.makedirs("tables", exist_ok=True)
+    results = []
+    
+    fig_roc, ax_roc = plt.subplots(figsize=(8, 6))
+    fig_pr, ax_pr = plt.subplots(figsize=(8, 6))
+    
+    for name, model in models_dict.items():
+        y_pred = model.predict(X_test)
+        y_proba = model.predict_proba(X_test)[:, 1]
+        
+        acc = accuracy_score(y_test, y_pred)
+        prec = precision_score(y_test, y_pred)
+        rec = recall_score(y_test, y_pred)
+        f1 = f1_score(y_test, y_pred)
+        roc_auc = roc_auc_score(y_test, y_proba)
+        pr_auc = average_precision_score(y_test, y_proba)
+        
+        results.append({
+            "model": name,
+            "Accuracy": acc,
+            "Precision": prec,
+            "Recall": rec,
+            "F1": f1,
+            "ROC-AUC": roc_auc,
+            "PR-AUC": pr_auc
+        })
+        
+        cm = confusion_matrix(y_test, y_pred)
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["FP", "CONF"])
+        fig_cm, ax_cm = plt.subplots()
+        disp.plot(ax=ax_cm, cmap="Blues")
+        ax_cm.set_title(f"Macierz Pomyłek - {name}")
+        fig_cm.savefig(f"{output_dir}/cm_{name}.png", dpi=300, bbox_inches="tight")
+        plt.close(fig_cm)
+        
+        fpr, tpr, _ = roc_curve(y_test, y_proba)
+        ax_roc.plot(fpr, tpr, label=f"{name} (AUC = {roc_auc:.3f})")
+        
+        pr, rc, _ = precision_recall_curve(y_test, y_proba)
+        ax_pr.plot(rc, pr, label=f"{name} (AUC = {pr_auc:.3f})")
+        
+    ax_roc.plot([0, 1], [0, 1], 'k--', alpha=0.5)
+    ax_roc.set_xlabel("False Positive Rate")
+    ax_roc.set_ylabel("True Positive Rate")
+    ax_roc.set_title("Krzywe ROC")
+    ax_roc.legend(loc="lower right")
+    fig_roc.savefig(f"{output_dir}/09_roc_all.png", dpi=300, bbox_inches="tight")
+    plt.close(fig_roc)
+    
+    ax_pr.set_xlabel("Recall")
+    ax_pr.set_ylabel("Precision")
+    ax_pr.set_title("Krzywe Precision-Recall")
+    ax_pr.legend(loc="lower left")
+    fig_pr.savefig(f"{output_dir}/10_pr_all.png", dpi=300, bbox_inches="tight")
+    plt.close(fig_pr)
+    
+    res_df = pd.DataFrame(results)
+    res_df.to_csv("tables/wyniki.csv", index=False)
+    return res_df
+
+def statistical_tests(models_dict, X_test, y_test):
+    # Osoba C - kod testów statystycznych (McNemar)
+    os.makedirs("results", exist_ok=True)
+    names = list(models_dict.keys())
+    preds = {name: models_dict[name].predict(X_test) for name in names}
+    
+    lines = ["Test McNemara na zbiorze testowym (p-values):\n"]
+    for i in range(len(names)):
+        for j in range(i+1, len(names)):
+            name1, name2 = names[i], names[j]
+            correct1 = (preds[name1] == y_test).astype(int)
+            correct2 = (preds[name2] == y_test).astype(int)
+            
+            n11 = np.sum((correct1 == 1) & (correct2 == 1))
+            n10 = np.sum((correct1 == 1) & (correct2 == 0))
+            n01 = np.sum((correct1 == 0) & (correct2 == 1))
+            n00 = np.sum((correct1 == 0) & (correct2 == 0))
+            
+            table = [[n11, n10], [n01, n00]]
+            res = mcnemar(table, exact=False, correction=True)
+            lines.append(f"{name1} vs {name2} -> p-value={res.pvalue:.4e}")
+            
+    with open("results/wilcoxon_test.txt", "w") as f:
+        f.write("\n".join(lines))
+
+def run_synthetic_demo(models_dict, X_template):
+    # Osoba C - demo na sztucznych obserwacjach
+    synths = []
+    scenarios = ["Earth 2.0", "Hot Jupiter", "Eclipsing binary", "Noise", "Borderline"]
+    for _ in scenarios:
+        synths.append(X_template.iloc[0].copy())
+        
+    synths_df = pd.DataFrame(synths)
+    synths_df.index = scenarios
+    
+    if "okres_orbitalny" in synths_df.columns:
+        synths_df.loc["Earth 2.0", ["okres_orbitalny", "promien_planety", "temperatura_rownowagi", "glebokosc_tranzytu", "stosunek_sygnal_szum"]] = [365.0, 1.0, 288.0, 84.0, 50.0]
+        synths_df.loc["Hot Jupiter", ["okres_orbitalny", "promien_planety", "temperatura_rownowagi", "glebokosc_tranzytu", "stosunek_sygnal_szum"]] = [3.0, 11.0, 1500.0, 10000.0, 100.0]
+        synths_df.loc["Eclipsing binary", ["glebokosc_tranzytu", "promien_planety", "stosunek_sygnal_szum"]] = [50000.0, 25.0, 5.0]
+        synths_df.loc["Noise", ["stosunek_sygnal_szum"]] = [4.0]
+        synths_df.loc["Borderline", ["okres_orbitalny", "promien_planety", "stosunek_sygnal_szum"]] = [50.0, 2.0, 10.0]
+        
+    res = []
+    for name, model in models_dict.items():
+        proba = model.predict_proba(synths_df)[:, 1]
+        res.append(pd.Series(proba, index=scenarios, name=name))
+        
+    demo_res = pd.concat(res, axis=1)
+    demo_res.to_csv("tables/demo_syntetyki.csv")
+    print("\nDemo syntetyków - Prawdopodobieństwo CONFIRMED:")
+    print(demo_res.round(3))
+
+
 
 if __name__ == "__main__":
     set_config(transform_output="pandas")
@@ -476,3 +597,14 @@ if __name__ == "__main__":
     cv_scores = {row["model"]: row["cv_roc_auc"] for row in hp_results}
 
     hybrid_model = hybryda(base_models, cv_scores)
+
+    # Osoba C - wywołanie metod testowania i dema
+    wszystkie_modele = base_models.copy()
+    wszystkie_modele["hybrid"] = hybrid_model
+    
+    wyniki_df = evaluate_models_and_plot(wszystkie_modele, X_test, y_test)
+    print("\nWyniki modeli na zbiorze testowym (Hold-out 20%):")
+    print(wyniki_df.round(4).to_string(index=False))
+    
+    statistical_tests(wszystkie_modele, X_test, y_test)
+    run_synthetic_demo(wszystkie_modele, X_test)
