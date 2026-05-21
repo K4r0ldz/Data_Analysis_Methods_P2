@@ -10,4 +10,5 @@ lightgbm
 shap
 joblib
 imbalanced-learn
-Pillow
+xgboost
+missingno
