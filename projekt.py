@@ -14,6 +14,13 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.svm import SVC
 from xgboost import XGBClassifier
 import numpy as np
+import missingno as msno
+from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.impute import KNNImputer
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import FunctionTransformer, StandardScaler
+from sklearn import set_config
+from sklearn.model_selection import train_test_split, RepeatedStratifiedKFold
 
 
 """
@@ -218,6 +225,70 @@ def generate_visualizations(df):
         ]
         wait(futures)
 
+# Analizuje braki danych i zwraca potok zawierający
+# imputację KNN oraz winsoryzację.
+def build_preprocessing_pipeline(X_train, requires_scaling=True):
+    missing_ratio = X_train.isna().mean()
+    cols_to_drop = missing_ratio[missing_ratio > 0.4].index.tolist()
+
+    active_cols = [c for c in X_train.columns if c not in cols_to_drop]
+
+    skewed_candidates = ['okres_orbitalny', 'insolacja', 'glebokosc_tranzytu', 'promien_planety', 'stosunek_sygnal_szum']
+    skewed_cols = [c for c in skewed_candidates if c in active_cols]
+    other_cols = [c for c in active_cols if c not in skewed_cols]
+
+    log_transformer = FunctionTransformer(np.log1p, validate=False, feature_names_out="one-to-one")
+
+    col_transform = ColumnTransformer(transformers=[
+        ('log1p', log_transformer, skewed_cols),
+        ('passthrough', 'passthrough', other_cols)
+    ], remainder='drop')
+
+    scaler = StandardScaler() if requires_scaling else 'passthrough'
+
+    pipeline = Pipeline(steps=[
+        ('imputer', KNNImputer(n_neighbors=5)),
+        ('winsorizer', WinsorizerTransformer(0.01, 0.99)),
+        ('transformations', col_transform),
+        ('scaler', scaler)
+    ])
+
+    return pipeline, cols_to_drop
+
+
+# Transformator do Pipeline wykonujący winsoryzację (1-99 percentyl).
+# Uczy się granic na zbiorze treningowym i aplikuje je do testowego.
+class WinsorizerTransformer(BaseEstimator, TransformerMixin):
+    """
+    Transformator do Pipeline wykonujący winsoryzację (1-99 percentyl).
+    """
+    def __init__(self, lower_quantile=0.01, upper_quantile=0.99):
+        self.lower_quantile = lower_quantile
+        self.upper_quantile = upper_quantile
+
+    def fit(self, X, y=None):
+        if not isinstance(X, pd.DataFrame):
+            X_df = pd.DataFrame(X, columns=[str(i) for i in range(X.shape[1])])
+            self.feature_names_in_ = X_df.columns
+        else:
+            X_df = X
+            self.feature_names_in_ = X.columns
+
+        self.lower_bounds_ = X_df.quantile(self.lower_quantile)
+        self.upper_bounds_ = X_df.quantile(self.upper_quantile)
+        return self
+
+    def transform(self, X, y=None):
+        if not isinstance(X, pd.DataFrame):
+            X_df = pd.DataFrame(X, columns=self.feature_names_in_)
+        else:
+            X_df = X.copy()
+
+        X_df = X_df.clip(lower=self.lower_bounds_, upper=self.upper_bounds_, axis=1)
+        return X_df
+
+    def get_feature_names_out(self, input_features=None):
+        return self.feature_names_in_
 
 """
     Osoba B
@@ -225,7 +296,7 @@ def generate_visualizations(df):
 # Stałe
 PARAM_GRID_LOGREG = {
     "clf__C": [0.01, 0.1, 1, 10],
-    "clf__penalty": ["l1", "l2"],
+    "clf__l1_ratio": [1, 0],  
 }
 
 PARAM_GRID_RF = {
@@ -339,51 +410,57 @@ def hybryda(base_models: dict, cv_scores: dict, model_path: str = "models/hybrid
 
 
 if __name__ == "__main__":
-
-    # Osoba A
+    set_config(transform_output="pandas")
     plt.rcParams["font.family"] = "serif"
     plt.rcParams["font.serif"] = ["Times New Roman", "Liberation Serif"]
 
-    X, Y = process_kepler_data("cumulative.csv")
+    # Osoba A
+    X, y = process_kepler_data("cumulative.csv")
     print(X.head())
-    print(Y.head())
+    print(y.head())
 
     save_descriptive_statistics(X)
     stats_table = pd.read_csv("tables/statystyki_opisowe.csv", index_col=0)
     pretty_print_descriptive_statistics(stats_table)
 
-    df_viz = pd.concat([X, Y], axis=1)
+    df_viz = pd.concat([X, y], axis=1)
     generate_visualizations(df_viz)
 
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.20, stratify=y, random_state=42
+    )
+    preprocessor_scaled, cols_to_drop_scaled = build_preprocessing_pipeline(X_train, requires_scaling=True)
+    preprocessor_tree, cols_to_drop_tree = build_preprocessing_pipeline(X_train, requires_scaling=False)
+
     # Osoba B
-    """
     hp_results = []
 
     logreg_model, p, s = train_model(
     "logreg",
-    LogisticRegression(solver="liblinear", max_iter=1000, random_state=42),
-    PARAM_GRID_LOGREG, preprocessor, X_train, y_train)
+    LogisticRegression(solver="liblinear", max_iter=1000, random_state=42, class_weight="balanced"),
+    PARAM_GRID_LOGREG, preprocessor_scaled, X_train, y_train)
     hp_results.append({"model": "logreg", "best_params": p, "cv_roc_auc": s})
     compute_feature_importances(logreg_model, "logreg", X_train)
 
     rf_model, p, s = train_model(
     "rf",
-    RandomForestClassifier(random_state=42, n_jobs=-1, class_weight="balanced"),
-    PARAM_GRID_RF, preprocessor, X_train, y_train)
+    RandomForestClassifier(random_state=42, n_jobs=1, class_weight="balanced"),
+    PARAM_GRID_RF, preprocessor_tree, X_train, y_train)
     hp_results.append({"model": "rf", "best_params": p, "cv_roc_auc": s})
     compute_feature_importances(rf_model, "rf", X_train)
 
+    scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
     xgb_model, p, s = train_model(
     "xgboost",
-    XGBClassifier(random_state=42, eval_metric="logloss", n_jobs=-1),
-    PARAM_GRID_XGB, preprocessor, X_train, y_train)
+    XGBClassifier(random_state=42, eval_metric="logloss", n_jobs=1, scale_pos_weight=scale_pos_weight),
+    PARAM_GRID_XGB, preprocessor_tree, X_train, y_train)
     hp_results.append({"model": "xgboost", "best_params": p, "cv_roc_auc": s})
     compute_feature_importances(xgb_model, "xgboost", X_train)
 
     svm_model, p, s = train_model(
     "svm_rbf",
     SVC(kernel="rbf", probability=True, random_state=42, class_weight="balanced"),
-    PARAM_GRID_SVM, preprocessor, X_train, y_train)
+    PARAM_GRID_SVM, preprocessor_scaled, X_train, y_train)
     hp_results.append({"model": "svm_rbf", "best_params": p, "cv_roc_auc": s})
     compute_feature_importances(svm_model, "svm_rbf", X_train)
 
@@ -398,5 +475,4 @@ if __name__ == "__main__":
     }
     cv_scores = {row["model"]: row["cv_roc_auc"] for row in hp_results}
 
-    hybrid_model = hybryda(base_models, cv_scores)   
-    """
+    hybrid_model = hybryda(base_models, cv_scores)
