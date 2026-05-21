@@ -296,7 +296,7 @@ class WinsorizerTransformer(BaseEstimator, TransformerMixin):
 # Stałe
 PARAM_GRID_LOGREG = {
     "clf__C": [0.01, 0.1, 1, 10],
-    "clf__penalty": ["l1", "l2"],
+    "clf__l1_ratio": [1, 0],  
 }
 
 PARAM_GRID_RF = {
@@ -437,21 +437,22 @@ if __name__ == "__main__":
 
     logreg_model, p, s = train_model(
     "logreg",
-    LogisticRegression(solver="liblinear", max_iter=1000, random_state=42),
+    LogisticRegression(solver="liblinear", max_iter=1000, random_state=42, class_weight="balanced"),
     PARAM_GRID_LOGREG, preprocessor_scaled, X_train, y_train)
     hp_results.append({"model": "logreg", "best_params": p, "cv_roc_auc": s})
     compute_feature_importances(logreg_model, "logreg", X_train)
 
     rf_model, p, s = train_model(
     "rf",
-    RandomForestClassifier(random_state=42, n_jobs=-1, class_weight="balanced"),
+    RandomForestClassifier(random_state=42, n_jobs=1, class_weight="balanced"),
     PARAM_GRID_RF, preprocessor_tree, X_train, y_train)
     hp_results.append({"model": "rf", "best_params": p, "cv_roc_auc": s})
     compute_feature_importances(rf_model, "rf", X_train)
 
+    scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
     xgb_model, p, s = train_model(
     "xgboost",
-    XGBClassifier(random_state=42, eval_metric="logloss", n_jobs=-1),
+    XGBClassifier(random_state=42, eval_metric="logloss", n_jobs=1, scale_pos_weight=scale_pos_weight),
     PARAM_GRID_XGB, preprocessor_tree, X_train, y_train)
     hp_results.append({"model": "xgboost", "best_params": p, "cv_roc_auc": s})
     compute_feature_importances(xgb_model, "xgboost", X_train)
