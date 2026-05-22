@@ -232,6 +232,14 @@ def generate_visualizations(df):
         ]
         wait(futures)
 
+
+def generate_missing_matrix(X):
+  os.makedirs('figures', exist_ok=True)
+  msno.matrix(X, figsize=(10, 6), color=(0.2, 0.4, 0.65))
+  plt.savefig('figures/missing_matrix.png', dpi=300, bbox_inches='tight')
+  plt.close()
+
+
 # Analizuje braki danych i zwraca potok zawierający
 # imputację KNN oraz winsoryzację.
 def build_preprocessing_pipeline(X_train, requires_scaling=True):
@@ -640,6 +648,7 @@ if __name__ == "__main__":
     set_config(transform_output="pandas")
     plt.rcParams["font.family"] = "serif"
     plt.rcParams["font.serif"] = ["Times New Roman", "Liberation Serif"]
+    plt.rcParams["font.size"] = 14 
 
     # Osoba A
     X, y = process_kepler_data("cumulative.csv")
@@ -652,6 +661,7 @@ if __name__ == "__main__":
 
     df_viz = pd.concat([X, y], axis=1)
     generate_visualizations(df_viz)
+    generate_missing_matrix(X)
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.20, stratify=y, random_state=42
