@@ -566,10 +566,9 @@ def format_dict_strings(val):
             return val
     return val
 
-
 # Wczytuje wszystkie pliki CSV z input_dir i zapisuje je jako obrazy PNG/SVG w output_dir.
 # Format wyjściowy: figures/table_{oryginalna_nazwa}.png/svg
-def generate_table_images(input_dir='tables', output_dir='figures', format='svg'):
+def generate_table_images(input_dir='tables', output_dir='figures', format='png', max_cols=10):
     os.makedirs(output_dir, exist_ok=True)
     csv_files = glob.glob(os.path.join(input_dir, '*.csv'))
     
@@ -585,36 +584,57 @@ def generate_table_images(input_dir='tables', output_dir='figures', format='svg'
         for col in df.columns:
             df[col] = df[col].apply(format_dict_strings)
         
-        fig, ax = plt.subplots(figsize=(12, 6))
-        ax.axis('off')
+        total_cols = len(df.columns)
         
-        table = ax.table(
-            cellText=df.values,
-            colLabels=df.columns,
-            loc='center',
-            cellLoc='center'
-        )
+        if total_cols <= max_cols:
+            parts = [(df, "")]
+        else:
+            parts = []
+            data_cols = total_cols - 1
+            max_data_cols = max_cols - 1
+            
+            num_chunks = (data_cols + max_data_cols - 1) // max_data_cols
+            base_size = data_cols // num_chunks
+            remainder = data_cols % num_chunks
+            
+            start_idx = 1
+            for i in range(num_chunks):
+                current_size = base_size + (1 if i < remainder else 0)
+                end_idx = start_idx + current_size
+                cols_indices = [0] + list(range(start_idx, end_idx))
+                parts.append((df.iloc[:, cols_indices], str(i + 1)))
+                start_idx = end_idx
 
-        table.auto_set_column_width(col=list(range(len(df.columns))))
-        
-        table.auto_set_font_size(False)
-        table.set_fontsize(10)
-        table.scale(1.2, 1.5) # Szerokość i wysokość komórek
-        
-        for (row, col), cell in table.get_celld().items():
-            if row == 0:
-                cell.set_text_props(weight='bold')
-                cell.set_facecolor('#f2f2f2')
-                
-        output_path = os.path.join(output_dir, f'table_{name_without_ext}.{format}')
-        
-        fig.canvas.draw()
-        
-        bbox = table.get_window_extent(fig.canvas.get_renderer())
-        bbox_inches = bbox.transformed(fig.dpi_scale_trans.inverted())
-        
-        plt.savefig(output_path, format=format, dpi=300, bbox_inches=bbox_inches, pad_inches=0.02)
-        plt.close(fig)
+        for sub_df, suffix in parts:
+            fig, ax = plt.subplots(figsize=(12, 6))
+            ax.axis('off')
+            
+            table = ax.table(
+                cellText=sub_df.values,
+                colLabels=sub_df.columns,
+                loc='center',
+                cellLoc='center'
+            )
+
+            table.auto_set_column_width(col=list(range(len(sub_df.columns))))
+            table.auto_set_font_size(False)
+            table.set_fontsize(10)
+            table.scale(1.2, 1.5)
+            
+            for (row, col), cell in table.get_celld().items():
+                if row == 0:
+                    cell.set_text_props(weight='bold')
+                    cell.set_facecolor('#f2f2f2')
+                    
+            output_path = os.path.join(output_dir, f'table_{name_without_ext}{suffix}.{format}')
+            
+            fig.canvas.draw()
+            bbox = table.get_window_extent(fig.canvas.get_renderer())
+            bbox_inches = bbox.transformed(fig.dpi_scale_trans.inverted())
+            
+            plt.savefig(output_path, format=format, dpi=300, bbox_inches=bbox_inches, pad_inches=0.02)
+            plt.close(fig)
+
 
 if __name__ == "__main__":
     set_config(transform_output="pandas")
