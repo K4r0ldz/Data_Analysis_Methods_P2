@@ -584,7 +584,7 @@ if __name__ == "__main__":
 
     logreg_model, p, s = train_model(
     "logreg",
-    LogisticRegression(solver="liblinear", max_iter=1000, random_state=42, class_weight="balanced"),
+    LogisticRegression(solver="saga", max_iter=2000, random_state=42, class_weight="balanced"),
     PARAM_GRID_LOGREG, preprocessor_scaled, X_train, y_train)
     hp_results.append({"model": "logreg", "best_params": p, "cv_roc_auc": s})
     compute_feature_importances(logreg_model, "logreg", X_train)
