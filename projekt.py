@@ -161,14 +161,17 @@ def pretty_print_descriptive_statistics(stats_table, columns_per_batch=5):
         print()
 
 
-def _plot_compact_hist(df, num_cols):
-    cols = 3
+def _plot_compact_hist(df, num_cols, percentile=0.99):
+    cols = 4
     rows = math.ceil(len(num_cols) / cols)
     fig, axes = plt.subplots(rows, cols, figsize=(cols * 4, rows * 3))
     axes = axes.flatten()
 
     for i, col in enumerate(num_cols):
-        sns.histplot(data=df, x=col, kde=True, ax=axes[i])
+        cutoff = df[col].quantile(percentile)
+        filtered_df = df[df[col] <= cutoff]
+        
+        sns.histplot(data=filtered_df, x=col, kde=True, ax=axes[i])
         axes[i].set_title(col)
         axes[i].set_xlabel("")
 
@@ -181,7 +184,7 @@ def _plot_compact_hist(df, num_cols):
 
 
 def _plot_compact_box(df, num_cols):
-    cols = 3
+    cols = 4
     rows = math.ceil(len(num_cols) / cols)
     fig, axes = plt.subplots(rows, cols, figsize=(cols * 4, rows * 3))
     axes = axes.flatten()
@@ -200,7 +203,7 @@ def _plot_compact_box(df, num_cols):
 
 
 def _plot_compact_violin(df, num_cols):
-    cols = 3
+    cols = 4
     rows = math.ceil(len(num_cols) / cols)
     fig, axes = plt.subplots(rows, cols, figsize=(cols * 4, rows * 3))
     axes = axes.flatten()
@@ -243,7 +246,6 @@ def _plot_log_transform(df, log_cols):
 def _plot_corr(df):
     plt.figure(figsize=(10, 8))
     sns.heatmap(df.corr(), cmap="coolwarm", center=0)
-    plt.title("Macierz korelacji")
     plt.savefig("figures/correlation_matrix.png", dpi=300, bbox_inches="tight")
     plt.close()
 
@@ -251,7 +253,6 @@ def _plot_corr(df):
 def _plot_count(df):
     plt.figure(figsize=(6, 4))
     sns.countplot(x="target", data=df)
-    plt.title("Balans klas (Target)")
     plt.savefig("figures/countplot_target.png", dpi=300, bbox_inches="tight")
     plt.close()
 
