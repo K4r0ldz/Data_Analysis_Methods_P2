@@ -19,15 +19,27 @@ import numpy as np
 import missingno as msno
 from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.impute import KNNImputer
+from sklearn.inspection import permutation_importance
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import FunctionTransformer, StandardScaler
 from sklearn import set_config
-from sklearn.model_selection import train_test_split, RepeatedStratifiedKFold
+from sklearn.model_selection import train_test_split, RepeatedStratifiedKFold, cross_validate
 from statsmodels.stats.contingency_tables import mcnemar
 from sklearn.metrics import (accuracy_score, precision_score, recall_score,
                              f1_score, roc_auc_score, average_precision_score,
                              roc_curve, precision_recall_curve, confusion_matrix,
                              ConfusionMatrixDisplay)
+
+
+# Stała wspólna: cechy silnie prawoskośne poddawane logarytmowaniu (log1p).
+# Używana zarówno w wizualizacji EDA (przed/po), jak i w pipeline preprocessingu.
+LOG_FEATURES = [
+    "okres_orbitalny",
+    "insolacja",
+    "glebokosc_tranzytu",
+    "promien_planety",
+    "stosunek_sygnal_szum",
+]
 
 
 """
@@ -56,6 +68,8 @@ def process_kepler_data(filepath):
         "koi_fpflag_ec",
         "ra",
         "dec",
+        "koi_time0bk",     # epoka pierwszego tranzytu (BKJD) - arbitralny punkt w czasie, bez sensu fizycznego
+        "koi_tce_plnt_num",  # numer planety w TCE - metadana pipeline'u NASA (multiplicity boost), wyciek
     ]
 
     err_cols = [c for c in df.columns if "_err1" in c or "_err2" in c]
@@ -110,6 +124,31 @@ def save_descriptive_statistics(df, filepath="tables/statystyki_opisowe.csv"):
     stats_table = pd.concat([desc, additional_stats], axis=1)
     stats_table.to_csv(filepath)
     return stats_table
+
+
+# Liczy obserwacje odstające regułą IQR (poza [Q1-1.5*IQR, Q3+1.5*IQR])
+# i zapisuje tabelę "n outlierów per kolumna" do tables/outliery.csv
+def save_outlier_counts(df, filepath="tables/outliery.csv"):
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+
+    num = df.select_dtypes(include=["number"]).drop(columns=["target"], errors="ignore")
+    q1 = num.quantile(0.25)
+    q3 = num.quantile(0.75)
+    iqr = q3 - q1
+    lower = q1 - 1.5 * iqr
+    upper = q3 + 1.5 * iqr
+
+    mask = (num < lower) | (num > upper)
+    out = pd.DataFrame(
+        {
+            "n_outlierow": mask.sum(),
+            "outliery_%": (mask.mean() * 100).round(2),
+            "dolna_granica": lower.round(3),
+            "gorna_granica": upper.round(3),
+        }
+    )
+    out.to_csv(filepath)
+    return out
 
 
 # Wyświetla statystyki opisowe w czytelnych porcjach
@@ -179,6 +218,28 @@ def _plot_compact_violin(df, num_cols):
     plt.close(fig)
 
 
+def _plot_log_transform(df, log_cols):
+    # Porównanie rozkładów przed/po log1p dla cech silnie prawoskośnych.
+    # Górny wiersz: rozkład surowy; dolny: log1p. Skośność w tytułach (przed/po).
+    cols = [c for c in log_cols if c in df.columns]
+    n = len(cols)
+    fig, axes = plt.subplots(2, n, figsize=(n * 3.2, 6))
+    for j, col in enumerate(cols):
+        raw = df[col].dropna()
+        logged = np.log1p(raw)
+        sns.histplot(raw, kde=True, ax=axes[0, j])
+        axes[0, j].set_title(f"{col}\nskośność = {stats.skew(raw):.2f}")
+        axes[0, j].set_xlabel("")
+        sns.histplot(logged, kde=True, ax=axes[1, j])
+        axes[1, j].set_title(f"log1p\nskośność = {stats.skew(logged):.2f}")
+        axes[1, j].set_xlabel("")
+    axes[0, 0].set_ylabel("przed (raw)")
+    axes[1, 0].set_ylabel("po (log1p)")
+    plt.tight_layout()
+    fig.savefig("figures/log_transform_compare.png", dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
 def _plot_corr(df):
     plt.figure(figsize=(10, 8))
     sns.heatmap(df.corr(), cmap="coolwarm", center=0)
@@ -226,6 +287,7 @@ def generate_visualizations(df):
             executor.submit(_plot_compact_hist, df, num_cols),
             executor.submit(_plot_compact_box, df, num_cols),
             executor.submit(_plot_compact_violin, df, num_cols),
+            executor.submit(_plot_log_transform, df, LOG_FEATURES),
             executor.submit(_plot_corr, df),
             executor.submit(_plot_count, df),
             executor.submit(_plot_pair, df),
@@ -241,15 +303,14 @@ def generate_missing_matrix(X):
 
 
 # Analizuje braki danych i zwraca potok zawierający
-# imputację KNN oraz winsoryzację.
+# imputację KNN (po wcześniejszym skalowaniu cech) oraz winsoryzację.
 def build_preprocessing_pipeline(X_train, requires_scaling=True):
     missing_ratio = X_train.isna().mean()
     cols_to_drop = missing_ratio[missing_ratio > 0.4].index.tolist()
 
     active_cols = [c for c in X_train.columns if c not in cols_to_drop]
 
-    skewed_candidates = ['okres_orbitalny', 'insolacja', 'glebokosc_tranzytu', 'promien_planety', 'stosunek_sygnal_szum']
-    skewed_cols = [c for c in skewed_candidates if c in active_cols]
+    skewed_cols = [c for c in LOG_FEATURES if c in active_cols]
     other_cols = [c for c in active_cols if c not in skewed_cols]
 
     log_transformer = FunctionTransformer(np.log1p, validate=False, feature_names_out="one-to-one")
@@ -262,10 +323,11 @@ def build_preprocessing_pipeline(X_train, requires_scaling=True):
     scaler = StandardScaler() if requires_scaling else 'passthrough'
 
     pipeline = Pipeline(steps=[
-        ('imputer', KNNImputer(n_neighbors=5)),
+        ('transformations', col_transform),       # log1p na skośnych (NaN zachowane)
+        ('pre_impute_scaler', StandardScaler()),  # NaN-aware: równa skale cech do KNN
+        ('imputer', KNNImputer(n_neighbors=5)),   # odległości na zeskalowanych cechach
         ('winsorizer', WinsorizerTransformer(0.01, 0.99)),
-        ('transformations', col_transform),
-        ('scaler', scaler)
+        ('scaler', scaler)                        # czysty re-scaling dla modeli liniowych
     ])
 
     return pipeline, cols_to_drop
@@ -311,7 +373,7 @@ class WinsorizerTransformer(BaseEstimator, TransformerMixin):
 # Stałe
 PARAM_GRID_LOGREG = {
     "clf__C": [0.01, 0.1, 1, 10],
-    "clf__l1_ratio": [1, 0],  
+    "clf__l1_ratio": [0, 1],  # sklearn 1.8: 0 = L2 (ridge), 1 = L1 (lasso)
 }
 
 PARAM_GRID_RF = {
@@ -360,20 +422,26 @@ def train_model(name, classifier, param_grid, preprocessor, X_train, y_train, mo
     joblib.dump(grid.best_estimator_, model_path)
     return grid.best_estimator_, grid.best_params_, grid.best_score_
 
-# Wyciąga i zapisuje ważność cech dla modeli, które ją udostępniają (np. RF, XGB) lub współczynniki dla modeli liniowych (LogReg, SVM liniowy).
-def compute_feature_importances(model, model_name, X_train, output_dir="results"):
+# Wyciąga i zapisuje ważność cech: feature_importances_ (RF/XGB) lub |coef_| (LogReg).
+# Dla modeli bez wbudowanej ważności (np. SVM RBF) liczy permutation importance.
+def compute_feature_importances(model, model_name, X_train, y_train, output_dir="results"):
     os.makedirs(output_dir, exist_ok=True)
     clf = model.named_steps["clf"]
 
     if hasattr(clf, "feature_importances_"):
         importances = clf.feature_importances_
+        feature_names = model.named_steps["preprocessor"].get_feature_names_out()
     elif hasattr(clf, "coef_"):
         importances = abs(clf.coef_[0])  # dla LogReg/SVM liniowego
+        feature_names = model.named_steps["preprocessor"].get_feature_names_out()
     else:
-        print(f"[{model_name}] brak feature_importances_ ani coef_")
-        return None
-
-    feature_names = model.named_steps["preprocessor"].get_feature_names_out()
+        # SVM RBF i inne modele bez wbudowanej ważności – permutation importance
+        result = permutation_importance(
+            model, X_train, y_train, n_repeats=5,
+            scoring="roc_auc", random_state=42, n_jobs=-1
+        )
+        importances = result.importances_mean
+        feature_names = X_train.columns
 
     imp_df = pd.DataFrame({"feature": feature_names, "importance": importances}) \
                .sort_values("importance", ascending=False)
@@ -421,6 +489,34 @@ def hybryda(base_models: dict, cv_scores: dict, model_path: str = "models/hybrid
 """
     Osoba C
 """
+
+
+def cross_validate_base_models(base_models, X_train, y_train, filepath="tables/wyniki_cv.csv"):
+    # Osoba C - 5-fold CV na zbiorze treningowym: średnia ± std dla każdego miernika.
+    # Dotyczy modeli bazowych (przeuczalne pipeline'y); hybryda nie ma fit, więc tu jej nie ma.
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    scoring = {
+        "Accuracy": "accuracy",
+        "Precision": "precision",
+        "Recall": "recall",
+        "F1": "f1",
+        "ROC-AUC": "roc_auc",
+        "PR-AUC": "average_precision",
+    }
+    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+    rows = []
+    for name, est in base_models.items():
+        res = cross_validate(est, X_train, y_train, cv=cv, scoring=scoring, n_jobs=-1)
+        row = {"model": name}
+        for metric in scoring:
+            s = res[f"test_{metric}"]
+            row[metric] = f"{s.mean():.3f} ± {s.std():.3f}"
+        rows.append(row)
+
+    cv_df = pd.DataFrame(rows)
+    cv_df.to_csv(filepath, index=False)
+    return cv_df
 
 
 def evaluate_models_and_plot(models_dict, X_test, y_test, output_dir="figures"):
@@ -508,7 +604,7 @@ def statistical_tests(models_dict, X_test, y_test):
             res = mcnemar(table, exact=False, correction=True)
             lines.append(f"{name1} vs {name2} -> p-value={res.pvalue:.4e}")
             
-    with open("results/wilcoxon_test.txt", "w") as f:
+    with open("results/mcnemar_test.txt", "w") as f:
         f.write("\n".join(lines))
 
 def run_synthetic_demo(models_dict, X_template):
@@ -656,6 +752,7 @@ if __name__ == "__main__":
     print(y.head())
 
     save_descriptive_statistics(X)
+    save_outlier_counts(X)
     stats_table = pd.read_csv("tables/statystyki_opisowe.csv", index_col=0)
     pretty_print_descriptive_statistics(stats_table)
 
@@ -677,14 +774,14 @@ if __name__ == "__main__":
     LogisticRegression(solver="saga", max_iter=2000, random_state=42, class_weight="balanced"),
     PARAM_GRID_LOGREG, preprocessor_scaled, X_train, y_train)
     hp_results.append({"model": "logreg", "best_params": p, "cv_roc_auc": s})
-    compute_feature_importances(logreg_model, "logreg", X_train)
+    compute_feature_importances(logreg_model, "logreg", X_train, y_train)
 
     rf_model, p, s = train_model(
     "rf",
     RandomForestClassifier(random_state=42, n_jobs=1, class_weight="balanced"),
     PARAM_GRID_RF, preprocessor_tree, X_train, y_train)
     hp_results.append({"model": "rf", "best_params": p, "cv_roc_auc": s})
-    compute_feature_importances(rf_model, "rf", X_train)
+    compute_feature_importances(rf_model, "rf", X_train, y_train)
 
     scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
     xgb_model, p, s = train_model(
@@ -692,14 +789,14 @@ if __name__ == "__main__":
     XGBClassifier(random_state=42, eval_metric="logloss", n_jobs=1, scale_pos_weight=scale_pos_weight),
     PARAM_GRID_XGB, preprocessor_tree, X_train, y_train)
     hp_results.append({"model": "xgboost", "best_params": p, "cv_roc_auc": s})
-    compute_feature_importances(xgb_model, "xgboost", X_train)
+    compute_feature_importances(xgb_model, "xgboost", X_train, y_train)
 
     svm_model, p, s = train_model(
     "svm_rbf",
     SVC(kernel="rbf", probability=True, random_state=42, class_weight="balanced"),
     PARAM_GRID_SVM, preprocessor_scaled, X_train, y_train)
     hp_results.append({"model": "svm_rbf", "best_params": p, "cv_roc_auc": s})
-    compute_feature_importances(svm_model, "svm_rbf", X_train)
+    compute_feature_importances(svm_model, "svm_rbf", X_train, y_train)
 
     os.makedirs("tables", exist_ok=True)
     pd.DataFrame(hp_results).to_csv("tables/hiperparametry.csv", index=False)
@@ -717,7 +814,11 @@ if __name__ == "__main__":
     # Osoba C - wywołanie metod testowania i dema
     wszystkie_modele = base_models.copy()
     wszystkie_modele["hybrid"] = hybrid_model
-    
+
+    wyniki_cv_df = cross_validate_base_models(base_models, X_train, y_train)
+    print("\nWalidacja krzyżowa 5-fold (średnia ± std) - modele bazowe:")
+    print(wyniki_cv_df.to_string(index=False))
+
     wyniki_df = evaluate_models_and_plot(wszystkie_modele, X_test, y_test)
     print("\nWyniki modeli na zbiorze testowym (Hold-out 20%):")
     print(wyniki_df.round(4).to_string(index=False))
