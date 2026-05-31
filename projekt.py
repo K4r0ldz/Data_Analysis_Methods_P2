@@ -611,7 +611,7 @@ def statistical_tests(models_dict, X_test, y_test):
 def run_synthetic_demo(models_dict, X_template):
     # Osoba C - demo na sztucznych obserwacjach
     synths = []
-    scenarios = ["Earth 2.0", "Hot Jupiter", "Eclipsing binary", "Noise", "Borderline"]
+    scenarios = ["Earth 2.0", "Mini-Neptune", "Eclipsing binary", "Noise", "Borderline"]
     for _ in scenarios:
         synths.append(X_template.iloc[0].copy())
         
@@ -631,9 +631,9 @@ def run_synthetic_demo(models_dict, X_template):
             365.0, 13.0, 84.0, 1.0, 288.0, 1.0, 50.0, 5778.0, 4.44, 1.0, 0.1, 12.0
         ]
 
-        # Hot Jupiter - gazowy gigant bardzo blisko gwiazdy
-        synths_df.loc["Hot Jupiter", all_columns] = [
-            3.0, 3.0, 10000.0, 11.0, 1500.0, 1000.0, 100.0, 5778.0, 4.44, 1.0, 0.5, 11.0
+        # Mini-Neptune - najpopularniejszy typ w danych Keplera
+        synths_df.loc["Mini-Neptune", all_columns] = [
+            20.0, 4.0, 500.0, 2.5, 600.0, 15.0, 60.0, 5800.0, 4.40, 1.0, 0.4, 12.5
         ]
 
         # Eclipsing binary - zaćmieniowy układ podwójny (fałszywy alarm, ogromny spadek jasności)
