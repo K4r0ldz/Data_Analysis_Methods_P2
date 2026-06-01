@@ -42,10 +42,6 @@ LOG_FEATURES = [
 ]
 
 
-"""
-    Osoba A
-"""
-
 # Wczytuje dane z pliku CSV
 # Usuwa kolumny typu leakage/ID/błędy/pozycja,
 # Zwraca macierz cech X z nazwanymi kolumnami
@@ -368,9 +364,7 @@ class WinsorizerTransformer(BaseEstimator, TransformerMixin):
     def get_feature_names_out(self, input_features=None):
         return self.feature_names_in_
 
-"""
-    Osoba B
-"""
+
 # Stałe
 PARAM_GRID_LOGREG = {
     "clf__C": [0.01, 0.1, 1, 10],
@@ -487,13 +481,10 @@ def hybryda(base_models: dict, cv_scores: dict, model_path: str = "models/hybrid
 
     return hybrid
 
-"""
-    Osoba C
-"""
 
 
 def cross_validate_base_models(base_models, X_train, y_train, filepath="tables/wyniki_cv.csv"):
-    # Osoba C - 5-fold CV na zbiorze treningowym: średnia ± std dla każdego miernika.
+    # 5-fold CV na zbiorze treningowym: średnia ± std dla każdego miernika.
     # Dotyczy modeli bazowych (przeuczalne pipeline'y); hybryda nie ma fit, więc tu jej nie ma.
     os.makedirs(os.path.dirname(filepath), exist_ok=True)
     scoring = {
@@ -521,7 +512,7 @@ def cross_validate_base_models(base_models, X_train, y_train, filepath="tables/w
 
 
 def evaluate_models_and_plot(models_dict, X_test, y_test, output_dir="figures"):
-    # Osoba C - kod ewaluacji i wykresy do raportu
+    # kod ewaluacji i wykresy do raportu
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs("tables", exist_ok=True)
     results = []
@@ -584,7 +575,7 @@ def evaluate_models_and_plot(models_dict, X_test, y_test, output_dir="figures"):
     return res_df
 
 def statistical_tests(models_dict, X_test, y_test):
-    # Osoba C - kod testów statystycznych (McNemar)
+    # kod testów statystycznych (McNemar)
     os.makedirs("results", exist_ok=True)
     names = list(models_dict.keys())
     preds = {name: models_dict[name].predict(X_test) for name in names}
@@ -609,7 +600,7 @@ def statistical_tests(models_dict, X_test, y_test):
         f.write("\n".join(lines))
 
 def run_synthetic_demo(models_dict, X_template):
-    # Osoba C - demo na sztucznych obserwacjach
+    #  demo na sztucznych obserwacjach
     synths = []
     scenarios = ["Earth 2.0", "Mini-Neptune", "Eclipsing binary", "Noise", "Borderline"]
     for _ in scenarios:
@@ -747,7 +738,6 @@ if __name__ == "__main__":
     plt.rcParams["font.serif"] = ["Times New Roman", "Liberation Serif"]
     plt.rcParams["font.size"] = 14 
 
-    # Osoba A
     X, y = process_kepler_data("cumulative.csv")
     print(X.head())
     print(y.head())
@@ -767,7 +757,6 @@ if __name__ == "__main__":
     preprocessor_scaled, cols_to_drop_scaled = build_preprocessing_pipeline(X_train, requires_scaling=True)
     preprocessor_tree, cols_to_drop_tree = build_preprocessing_pipeline(X_train, requires_scaling=False)
 
-    # Osoba B
     hp_results = []
 
     logreg_model, p, s = train_model(
@@ -812,7 +801,6 @@ if __name__ == "__main__":
 
     hybrid_model = hybryda(base_models, cv_scores)
 
-    # Osoba C - wywołanie metod testowania i dema
     wszystkie_modele = base_models.copy()
     wszystkie_modele["hybrid"] = hybrid_model
 
