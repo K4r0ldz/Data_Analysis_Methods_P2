@@ -29,6 +29,8 @@ from sklearn.metrics import (accuracy_score, precision_score, recall_score,
                              f1_score, roc_auc_score, average_precision_score,
                              roc_curve, precision_recall_curve, confusion_matrix,
                              ConfusionMatrixDisplay)
+from sklearn.tree import plot_tree
+from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
 
 
 # Stała wspólna: cechy silnie prawoskośne poddawane logarytmowaniu (log1p).
@@ -443,6 +445,136 @@ def compute_feature_importances(model, model_name, X_train, y_train, output_dir=
     imp_df.to_csv(f"{output_dir}/importance_{model_name}.csv", index=False)
     return imp_df
 
+
+MODEL_LABELS = {
+    "logreg": "Regresja logistyczna",
+    "rf": "Random Forest",
+    "xgboost": "XGBoost",
+    "svm_rbf": "SVM (RBF)",
+}
+
+
+def _prettify_feature_name(name):
+    label = str(name).replace("log1p__", "").replace("passthrough__", "")
+    return label.replace("_", " ")
+
+
+def plot_shallow_decision_tree(rf_model, filepath="figures/method_rf_tree.png", max_depth=3):
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    clf = rf_model.named_steps["clf"]
+    feature_names = [
+        _prettify_feature_name(n)
+        for n in rf_model.named_steps["preprocessor"].get_feature_names_out()
+    ]
+
+    fig, ax = plt.subplots(figsize=(18, 8))
+    plot_tree(
+        clf.estimators_[0],
+        feature_names=feature_names,
+        class_names=["FALSE POSITIVE", "CONFIRMED"],
+        filled=True,
+        rounded=True,
+        max_depth=max_depth,
+        fontsize=9,
+        ax=ax,
+    )
+    ax.set_title(
+        f"Przykładowe drzewo z lasu Random Forest (głębokość ≤ {max_depth})",
+        pad=12,
+    )
+    fig.tight_layout()
+    fig.savefig(filepath, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _draw_box(ax, xy, text, width=0.18, height=0.1, fc="#E8F0FE", ec="#2F5597"):
+    x, y = xy
+    box = FancyBboxPatch(
+        (x, y),
+        width,
+        height,
+        boxstyle="round,pad=0.01",
+        linewidth=1.2,
+        facecolor=fc,
+        edgecolor=ec,
+    )
+    ax.add_patch(box)
+    ax.text(x + width / 2, y + height / 2, text, ha="center", va="center", fontsize=9)
+    return (x + width / 2, y)
+
+
+def _draw_arrow(ax, start, end):
+    arrow = FancyArrowPatch(
+        start,
+        end,
+        arrowstyle="-|>",
+        mutation_scale=12,
+        linewidth=1.2,
+        color="#444444",
+    )
+    ax.add_patch(arrow)
+
+
+def plot_schematic_bagging(filepath="figures/method_rf_bagging.png"):
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.axis("off")
+
+    _draw_box(ax, (0.41, 0.82), "Zbiór treningowy", width=0.18, height=0.08, fc="#FFF2CC", ec="#BF9000")
+    for i, x in enumerate([0.08, 0.31, 0.54, 0.77]):
+        _draw_arrow(ax, (0.5, 0.82), (x + 0.09, 0.62))
+        _draw_box(ax, (x, 0.52), f"Bootstrap\n#{i + 1}", width=0.18, height=0.1, fc="#FCE5CD", ec="#B45F06")
+        _draw_arrow(ax, (x + 0.09, 0.52), (x + 0.09, 0.34))
+        _draw_box(ax, (x, 0.24), f"Drzewo\n#{i + 1}", width=0.18, height=0.1)
+
+    for x in [0.17, 0.40, 0.63, 0.86]:
+        _draw_arrow(ax, (x, 0.24), (0.5, 0.12))
+    _draw_box(ax, (0.34, 0.02), "Głosowanie większościowe\n(predykcja końcowa)", width=0.32, height=0.1, fc="#D9EAD3", ec="#38761D")
+
+    ax.set_title("Schemat ideowy Random Forest (bagging)", pad=14, fontsize=12)
+    fig.tight_layout()
+    fig.savefig(filepath, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_schematic_hybrid(weights_dict, filepath="figures/method_hybrid.png"):
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    fig, ax = plt.subplots(figsize=(11, 5))
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.axis("off")
+
+    model_order = ["logreg", "rf", "xgboost", "svm_rbf"]
+    xs = [0.06, 0.29, 0.52, 0.75]
+    for key, x in zip(model_order, xs):
+        label = MODEL_LABELS.get(key, key)
+        w = weights_dict.get(key, 0.0)
+        _draw_box(ax, (x, 0.62), f"{label}\npredict_proba(X)", width=0.19, height=0.14)
+        ax.text(x + 0.095, 0.52, f"w = {w:.3f}", ha="center", fontsize=9, color="#444444")
+        _draw_arrow(ax, (x + 0.095, 0.62), (0.5, 0.38))
+
+    _draw_box(ax, (0.30, 0.24), "Ważona średnia\nprawdopodobieństw", width=0.40, height=0.12, fc="#D9EAD3", ec="#38761D")
+    _draw_arrow(ax, (0.5, 0.24), (0.5, 0.10))
+    _draw_box(ax, (0.33, 0.02), "Decyzja: P(CONFIRMED) ≥ 0.5", width=0.34, height=0.08, fc="#FFF2CC", ec="#BF9000")
+
+    ax.set_title("Architektura modelu hybrydowego (weighted soft voting)", pad=14, fontsize=12)
+    fig.tight_layout()
+    fig.savefig(filepath, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def generate_method_figures(rf_model, cv_scores, output_dir="figures"):
+    os.makedirs(output_dir, exist_ok=True)
+    raw = np.array([cv_scores[k] for k in ["logreg", "rf", "xgboost", "svm_rbf"]])
+    weights = dict(zip(["logreg", "rf", "xgboost", "svm_rbf"], raw / raw.sum()))
+
+    plot_shallow_decision_tree(rf_model, filepath=f"{output_dir}/method_rf_tree.png")
+    plot_schematic_bagging(filepath=f"{output_dir}/method_rf_bagging.png")
+    plot_schematic_hybrid(weights, filepath=f"{output_dir}/method_hybrid.png")
+    print(f"[figures] Zapisano rysunki metod w katalogu '{output_dir}/method_*.png'")
+
 # Model hybrydowy
 class HybridSoftVoter:
   
@@ -732,11 +864,25 @@ def generate_table_images(input_dir='tables', output_dir='figures', format='png'
             plt.close(fig)
 
 
+def regenerate_method_figures_from_artifacts():
+    """Generuje rysunki metod bez ponownego trenowania modeli."""
+    hp = pd.read_csv("tables/hiperparametry.csv")
+    cv_scores = dict(zip(hp["model"], hp["cv_roc_auc"]))
+    rf_model = joblib.load("models/rf.pkl")
+    generate_method_figures(rf_model, cv_scores)
+
+
 if __name__ == "__main__":
+    import sys
+
     set_config(transform_output="pandas")
     plt.rcParams["font.family"] = "serif"
     plt.rcParams["font.serif"] = ["Times New Roman", "Liberation Serif"]
-    plt.rcParams["font.size"] = 14 
+    plt.rcParams["font.size"] = 14
+
+    if len(sys.argv) > 1 and sys.argv[1] == "--method-figures-only":
+        regenerate_method_figures_from_artifacts()
+        sys.exit(0)
 
     X, y = process_kepler_data("cumulative.csv")
     print(X.head())
@@ -798,6 +944,8 @@ if __name__ == "__main__":
     "svm_rbf": svm_model,
     }
     cv_scores = {row["model"]: row["cv_roc_auc"] for row in hp_results}
+
+    generate_method_figures(rf_model, cv_scores)
 
     hybrid_model = hybryda(base_models, cv_scores)
 
